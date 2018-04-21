@@ -1,0 +1,91 @@
+a) Test environment
+   Ubuntu 17.10 (Linux 4.11.0-10-generic x86_64)
+   
+b) Compiler and its version
+   gcc version 7.2.0 (Ubuntu 7.2.0-8ubuntu2)
+
+c) How to run (both server and client)
+
+	Unzip tar. Navigate to folder containing source files and make file. Run make from terminal and following explains the usage
+
+	Usage Client side:
+	==================
+	./pbproxy -k <filename> <destinationhost destinationport>
+	(eg:- ./pbproxy -k mykey.txt localhost 2222)
+
+	-k 		Specifies the <filename> from which the symmetric key is read. This option is mandatory
+	<destinationhost destinationport> Specifies the destination host and port to which message stream from stdin needs to be sent to.
+
+	Not specifying any of the above options raises an error.
+
+	Usage Server side:
+	==================
+	./pbproxy -l <portnumber> <destination host destination port> -k <filename>
+	(eg:- ./pbproxy -l 2222 localhost 22 -k mykey.txt)
+
+	-l 		Specifies the <portnumber> to listen to for traffic. This option decides whether pbproxy is in servermode or not.
+	-k		Specifies the <filename> from which the symmetric key is read. This option is mandatory
+	<destination host destination port> Specifies the destination host and port to which message stream from the accepted connection from port <portnumber> needs to be sent to.
+
+	Not specifying any of the above options raises an error.
+
+
+	Example outputs:
+	================
+
+	1. Pbproxy to harden an SSH server
+	Server side:
+	./pbproxy -l 2222 localhost 22 -k mykey.txt
+
+	Client side:
+	ssh -o "ProxyCommand ./pbproxy -k mykey.txt localhost 2222" localhost
+	osboxes@localhost's password:
+	osboxes@osboxes:~$ ls
+	Desktop examples.desktop pbproxy.c
+	osboxes@osboxes:~$ exit
+	logout
+	Connection to localhost closed.
+
+
+	2. Not specifying -k or <destinationhost destinationport> option
+
+	./pbproxy localhost 22 -l 2222
+
+	Invalid number of arguments!
+	Usage: ./pbproxy [-l <portnumber>] -k <filename> <destinationhost destinationport>
+
+
+
+d) Description about the design of pbproxy
+
+	Details of pbproxy client side (./pbproxy -k <filename> <destinationhost destinationport>):
+	=========================================================================================
+
+	In client mode, pbproxy connects to the destination host: destination port. An IV(not encrypted) is relayed to this destination as the first message. IV is a 16 byte random read from /dev/urandom. Also an IV is read from destination host:port for decrypting any message received from there.
+	The descriptor for stdin and the socket descriptor for destination host:port are added to a pollfd structure for polling.
+
+	If polling indicates that stdin has data to be received, then pbproxy reads plaintext traffic from stdin and encrypts it using AES in CTR mode. The ciphertext is relayed to the connected destination host: destination port. 
+
+	If polling indicates that destination socket has data to be received, then pbproxy reads ciphertext traffic from the destination and decrypts it using AES in CTR mode(using the received IV). The plaintext is then displayed on stdout. If the number of bytes read from destination socket is less than or equal to zero, it implies the connection can be closed.
+
+	stdin/stdout <-------> pbproxy <-------> destination host: destination port
+
+	Details of pbproxy server side:
+	===============================
+
+	In server mode, pbproxy listens to a particular port. It accepts a client connection and reads an IV from this connection to decrypt messages sent from the client. Another random IV(not encrypted) is also relayed to this client as the first message. Pbproxy also establishes another connection to destination host:port
+	The socket descriptor for accepted connection and the socket descriptor for destination host:port are added to a pollfd structure for polling.
+
+	If polling indicates that accepted connection socket has data to be received, then pbproxy reads encrypted traffic from this client and decrypts it using AES in CTR mode(using the received IV). The plaintext is relayed to the connected destination host: destination port. If the number of bytes read from client socket is less than or equal to zero, it implies the connection can be closed.
+
+	If polling indicates that destination socket descriptor has data to be received, then pbproxy reads plaintext traffic from the destination socket and encrypts it using AES in CTR mode. The ciphertext is then relayed to the client socket.
+
+	Once a client connection is closed, new connection is accepted and the communication flow continues.
+
+	client socket <-------> pbproxy <---------> destination host: destination port
+
+
+e) References you cite during writing your code
+
+	https://www.ibm.com/support/knowledgecenter/en/ssw_i5_54/rzab6/poll.htm
+	http://www.gurutechnologies.net/blog/aes-ctr-encryption-in-c/
